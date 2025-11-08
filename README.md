@@ -61,7 +61,7 @@
 
 ```bash
 git clone https://github.com/enzoxwashere/Adhan-Live
-cd adhan-live
+cd Adhan-Live
 makepkg -si
 ```
 
