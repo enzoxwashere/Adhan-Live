@@ -1,0 +1,50 @@
+post_install() {
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║          🕌 Adhan Live v2.0 - Installed Successfully          ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "✨ Features:"
+    echo "  • Beautiful TUI interface with Rich library"
+    echo "  • Real-time countdown with progress bar"
+    echo "  • Auto-detect location via IP"
+    echo "  • Multi-language support (English/Arabic)"
+    echo "  • Hijri and Gregorian dates"
+    echo "  • Desktop notifications"
+    echo "  • Threaded audio playback"
+    echo ""
+    echo "📋 Usage:"
+    echo "  adhan-live              # Live view (default)"
+    echo "  adhan-live --today      # Show today's times"
+    echo "  adhan-live --next       # Show next prayer"
+    echo "  adhan-live --mute       # Mute adhan sound"
+    echo "  adhan-live --lang ar    # Arabic language"
+    echo ""
+    echo "⚙️  Configuration:"
+    echo "  Config file: ~/.config/adhan-live/config.json"
+    echo ""
+    echo "🎵 Audio:"
+    echo "  Default: /usr/share/adhan-live/a1.mp3"
+    echo "  Requires: mpv (recommended) or ffmpeg/mpg123"
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "May Allah accept your prayers! 🕌"
+    echo ""
+}
+
+post_upgrade() {
+    post_install
+}
+
+post_remove() {
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "Adhan Live removed successfully"
+    echo ""
+    echo "Note: Config directory ~/.config/adhan-live/ was not removed"
+    echo "You can remove it manually if needed:"
+    echo "  rm -rf ~/.config/adhan-live/"
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════"
+    echo ""
+}

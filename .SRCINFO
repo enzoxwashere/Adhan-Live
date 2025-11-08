@@ -1,0 +1,28 @@
+pkgbase = adhan-live
+	pkgdesc = عرض احترافي لأوقات الصلاة بواجهة TUI جميلة في الطرفية
+	pkgver = 2.0.0
+	pkgrel = 1
+	url = https://github.com/enzoxwashere/adhan-live
+	install = adhan-live.install
+	arch = any
+	license = MIT
+	depends = python>=3.9
+	depends = python-requests
+	depends = python-rich
+	depends = libnotify
+	optdepends = mpv: مشغل صوت موصى به
+	optdepends = ffmpeg: مشغل صوت بديل
+	optdepends = mpg123: مشغل صوت بديل
+	provides = adhan-live
+	conflicts = adhan-reminder
+	replaces = adhan-reminder
+	source = adhan-live.py
+	source = a1.mp3
+	source = README.md
+	source = LICENSE
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+
+pkgname = adhan-live
