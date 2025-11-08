@@ -6,7 +6,7 @@
 
 تطبيق حديث، خفيف، وأنيق لعرض أوقات الصلاة بشكل مباشر في الطرفية مع عدٍّ تنازلي لحين الأذان، ومؤشرات تقدم، وإشعارات سطح المكتب.
 
-![الإصدار](https://img.shields.io/badge/version-2.0.0-blue)
+![الإصدار](https://img.shields.io/badge/version-1.0.0-blue)
 ![بايثون](https://img.shields.io/badge/python-3.9+-green)
 ![الترخيص](https://img.shields.io/badge/license-MIT-orange)
 
