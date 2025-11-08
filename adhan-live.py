@@ -1,409 +1,636 @@
 #!/usr/bin/env python3
 """
-Adhan Live Console - Beautiful prayer times display
-Live console with countdown timer
+Adhan Live - Professional Prayer Times Display
+A beautiful TUI application for displaying Islamic prayer times
 """
 
 import os
 import sys
 import json
 import time
+import argparse
 import subprocess
-import requests
+import threading
+from pathlib import Path
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from typing import Dict, Optional, Tuple
 
-# ANSI Color codes
-class Colors:
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    
-    # Foreground colors
-    BLACK = '\033[30m'
-    RED = '\033[31m'
-    GREEN = '\033[32m'
-    YELLOW = '\033[33m'
-    BLUE = '\033[34m'
-    MAGENTA = '\033[35m'
-    CYAN = '\033[36m'
-    WHITE = '\033[37m'
-    
-    # Bright colors
-    BRIGHT_BLACK = '\033[90m'
-    BRIGHT_RED = '\033[91m'
-    BRIGHT_GREEN = '\033[92m'
-    BRIGHT_YELLOW = '\033[93m'
-    BRIGHT_BLUE = '\033[94m'
-    BRIGHT_MAGENTA = '\033[95m'
-    BRIGHT_CYAN = '\033[96m'
-    BRIGHT_WHITE = '\033[97m'
-    
-    # Background colors
-    BG_BLACK = '\033[40m'
-    BG_RED = '\033[41m'
-    BG_GREEN = '\033[42m'
-    BG_YELLOW = '\033[43m'
-    BG_BLUE = '\033[44m'
-    BG_MAGENTA = '\033[45m'
-    BG_CYAN = '\033[46m'
-    BG_WHITE = '\033[47m'
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 
-class AdhanLive:
+try:
+    import requests
+except ImportError:
+    print("Error: 'requests' module not found. Install it with: pip install requests")
+    sys.exit(1)
+
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.live import Live
+    from rich.layout import Layout
+    from rich.text import Text
+    from rich import box
+except ImportError:
+    print("Error: 'rich' module not found. Install it with: pip install rich")
+    sys.exit(1)
+
+
+# ============================================================================
+# Configuration Manager
+# ============================================================================
+
+class ConfigManager:
+    """Manages application configuration"""
+    
+    DEFAULT_CONFIG = {
+        "audio_file": "/usr/share/adhan-live/a1.mp3",
+        "calculation_method": 4,
+        "auto_detect_location": True,
+        "latitude": None,
+        "longitude": None,
+        "timezone": None,
+        "enabled_prayers": ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"],
+        "volume": 100,
+        "language": "en",
+        "mute": False
+    }
+    
     def __init__(self):
-        # تحديد مسار ملف التكوين
-        if os.path.exists('/etc/adhan-reminder/config.json'):
-            self.config_path = '/etc/adhan-reminder/config.json'
-        else:
-            user_config = os.path.expanduser('~/.config/adhan-reminder/config.json')
-            self.config_path = user_config
-            
-        self.config = self.load_config()
-        self.prayer_times = {}
-        self.timezone = None
-        
-    def load_config(self):
-        """تحميل ملف التكوين"""
-        try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            else:
-                return self.create_default_config()
-        except Exception:
-            return self.create_default_config()
+        self.config_dir = Path.home() / ".config" / "adhan-live"
+        self.config_file = self.config_dir / "config.json"
+        self.config = self.load()
     
-    def create_default_config(self):
-        """إنشاء تكوين افتراضي"""
-        return {
-            "audio_file": "/usr/share/adhan-reminder/a1.mp3",
-            "calculation_method": 4,
-            "auto_detect_location": True,
-            "latitude": None,
-            "longitude": None,
-            "timezone": None,
-            "enabled_prayers": ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"],
-            "volume": 100
-        }
+    def load(self) -> Dict:
+        """Load configuration from file"""
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    return {**self.DEFAULT_CONFIG, **config}
+            except Exception:
+                return self.DEFAULT_CONFIG.copy()
+        return self.DEFAULT_CONFIG.copy()
     
-    def get_location(self):
-        """الحصول على الموقع الجغرافي تلقائياً"""
+    def save(self):
+        """Save configuration to file"""
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.config_file, 'w', encoding='utf-8') as f:
+            json.dump(self.config, f, indent=4, ensure_ascii=False)
+    
+    def get(self, key: str, default=None):
+        """Get configuration value"""
+        return self.config.get(key, default)
+    
+    def set(self, key: str, value):
+        """Set configuration value"""
+        self.config[key] = value
+        self.save()
+
+
+# ============================================================================
+# Prayer Times API Client
+# ============================================================================
+
+class PrayerTimesAPI:
+    """Handles API calls to Aladhan API"""
+    
+    BASE_URL = "http://api.aladhan.com/v1"
+    LOCATION_API = "http://ip-api.com/json/"
+    
+    def __init__(self, config: ConfigManager):
+        self.config = config
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': 'AdhanLive/2.0'})
+    
+    def get_location(self) -> Optional[Dict]:
+        """Get location from IP"""
         try:
-            response = requests.get('http://ip-api.com/json/', timeout=10)
+            response = self.session.get(self.LOCATION_API, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                if data['status'] == 'success':
-                    self.config['latitude'] = data['lat']
-                    self.config['longitude'] = data['lon']
-                    self.config['timezone'] = data['timezone']
-                    self.timezone = ZoneInfo(data['timezone'])
-                    return data
+                if data.get('status') == 'success':
+                    return {
+                        'city': data.get('city', 'Unknown'),
+                        'country': data.get('country', 'Unknown'),
+                        'lat': data.get('lat'),
+                        'lon': data.get('lon'),
+                        'timezone': data.get('timezone')
+                    }
         except Exception:
             pass
         return None
     
-    def fetch_prayer_times(self):
-        """جلب أوقات الصلاة من API"""
-        if self.config['auto_detect_location']:
-            if not self.config['latitude'] or not self.config['longitude']:
-                if not self.get_location():
-                    return False
+    def fetch_prayer_times(self, date: Optional[datetime] = None) -> Optional[Dict]:
+        """Fetch prayer times from API"""
+        if date is None:
+            date = datetime.now()
+        
+        if self.config.get('auto_detect_location'):
+            location = self.get_location()
+            if location:
+                self.config.set('latitude', location['lat'])
+                self.config.set('longitude', location['lon'])
+                self.config.set('timezone', location['timezone'])
+        
+        lat = self.config.get('latitude')
+        lon = self.config.get('longitude')
+        
+        if not lat or not lon:
+            return None
         
         try:
-            lat = self.config['latitude']
-            lon = self.config['longitude']
-            method = self.config['calculation_method']
-            
-            now = datetime.now()
-            
-            url = f"http://api.aladhan.com/v1/timings/{now.strftime('%d-%m-%Y')}"
+            url = f"{self.BASE_URL}/timings/{date.strftime('%d-%m-%Y')}"
             params = {
                 'latitude': lat,
                 'longitude': lon,
-                'method': method
+                'method': self.config.get('calculation_method', 4)
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = self.session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                if data['code'] == 200:
-                    timings = data['data']['timings']
-                    self.prayer_times = {
-                        'Fajr': timings['Fajr'],
-                        'Dhuhr': timings['Dhuhr'],
-                        'Asr': timings['Asr'],
-                        'Maghrib': timings['Maghrib'],
-                        'Isha': timings['Isha']
-                    }
-                    return True
+                if data.get('code') == 200:
+                    return data['data']
         except Exception:
             pass
         
-        return False
+        return None
+
+
+# ============================================================================
+# Prayer Times Manager
+# ============================================================================
+
+class PrayerTimesManager:
+    """Manages prayer times and calculations"""
     
-    def play_adhan(self, prayer_name):
-        """تشغيل صوت الأذان"""
-        audio_file = self.config['audio_file']
-        
-        if not os.path.exists(audio_file):
+    PRAYER_COLORS = {
+        'Fajr': 'magenta',
+        'Dhuhr': 'yellow',
+        'Asr': 'cyan',
+        'Maghrib': 'red',
+        'Isha': 'blue'
+    }
+    
+    PRAYER_ICONS = {
+        'Fajr': '🌅',
+        'Dhuhr': '☀️',
+        'Asr': '🌤️',
+        'Maghrib': '🌆',
+        'Isha': '🌙'
+    }
+    
+    def __init__(self, config: ConfigManager):
+        self.config = config
+        self.api = PrayerTimesAPI(config)
+        self.prayer_times: Dict[str, datetime] = {}
+        self.hijri_date = ""
+        self.location_data = None
+        self.timezone = None
+    
+    def update(self) -> bool:
+        """Update prayer times from API"""
+        data = self.api.fetch_prayer_times()
+        if not data:
             return False
         
+        tz_name = self.config.get('timezone')
+        if tz_name:
+            try:
+                self.timezone = ZoneInfo(tz_name)
+            except Exception:
+                self.timezone = None
+        
+        timings = data.get('timings', {})
+        date_obj = datetime.now(self.timezone) if self.timezone else datetime.now()
+        
+        self.prayer_times = {}
+        for prayer in ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha']:
+            if prayer in timings:
+                time_str = timings[prayer].split()[0]
+                try:
+                    hour, minute = map(int, time_str.split(':'))
+                    prayer_time = date_obj.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                    self.prayer_times[prayer] = prayer_time
+                except Exception:
+                    pass
+        
+        hijri = data.get('date', {}).get('hijri', {})
+        self.hijri_date = f"{hijri.get('day', '')} {hijri.get('month', {}).get('en', '')} {hijri.get('year', '')}"
+        
+        self.location_data = self.api.get_location()
+        
+        return True
+    
+    def get_next_prayer(self) -> Optional[Tuple[str, datetime]]:
+        """Get next prayer name and time"""
+        now = datetime.now(self.timezone) if self.timezone else datetime.now()
+        
+        for prayer in ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha']:
+            if prayer in self.prayer_times:
+                prayer_time = self.prayer_times[prayer]
+                if prayer_time > now:
+                    return (prayer, prayer_time)
+        
+        if 'Fajr' in self.prayer_times:
+            fajr_tomorrow = self.prayer_times['Fajr'] + timedelta(days=1)
+            return ('Fajr', fajr_tomorrow)
+        
+        return None
+    
+    def get_time_remaining(self, target_time: datetime) -> Tuple[int, int, int]:
+        """Calculate time remaining until target"""
+        now = datetime.now(self.timezone) if self.timezone else datetime.now()
+        diff = target_time - now
+        
+        if diff.total_seconds() < 0:
+            return (0, 0, 0)
+        
+        hours = diff.seconds // 3600
+        minutes = (diff.seconds % 3600) // 60
+        seconds = diff.seconds % 60
+        
+        return (hours, minutes, seconds)
+    
+    def is_prayer_time(self, prayer: str) -> bool:
+        """Check if it's time for a specific prayer"""
+        if prayer not in self.prayer_times:
+            return False
+        
+        now = datetime.now(self.timezone) if self.timezone else datetime.now()
+        prayer_time = self.prayer_times[prayer]
+        
+        return abs((now - prayer_time).total_seconds()) < 60
+
+
+# ============================================================================
+# Audio Player
+# ============================================================================
+
+class AudioPlayer:
+    """Handles audio playback in separate thread"""
+    
+    def __init__(self, config: ConfigManager):
+        self.config = config
+        self.is_playing = False
+        self.thread = None
+    
+    def play(self, audio_file: str):
+        """Play audio file in separate thread"""
+        if self.config.get('mute', False):
+            return
+        
+        if self.is_playing:
+            return
+        
+        self.thread = threading.Thread(target=self._play_audio, args=(audio_file,), daemon=True)
+        self.thread.start()
+    
+    def _play_audio(self, audio_file: str):
+        """Internal method to play audio"""
+        if not Path(audio_file).exists():
+            return
+        
+        self.is_playing = True
+        
         try:
-            # إرسال إشعار
+            players = [
+                (['mpv', '--no-video', '--really-quiet', audio_file], True),
+                (['ffplay', '-nodisp', '-autoexit', '-loglevel', 'quiet', audio_file], True),
+                (['mpg123', '-q', audio_file], True)
+            ]
+            
+            for cmd, _ in players:
+                try:
+                    if subprocess.run(['which', cmd[0]], capture_output=True).returncode == 0:
+                        subprocess.run(cmd, check=False, capture_output=True)
+                        break
+                except Exception:
+                    continue
+        finally:
+            self.is_playing = False
+    
+    def send_notification(self, title: str, message: str):
+        """Send desktop notification"""
+        try:
             subprocess.run([
                 'notify-send',
                 '-u', 'critical',
                 '-i', 'appointment-soon',
-                'وقت الصلاة',
-                f'حان الآن وقت صلاة {prayer_name}'
-            ], check=False)
-            
-            # تشغيل الصوت
-            players = ['mpg123', 'ffplay', 'mpv']
-            for player in players:
-                if subprocess.run(['which', player], capture_output=True).returncode == 0:
-                    if player == 'mpg123':
-                        subprocess.run(['mpg123', '-q', audio_file], check=False)
-                    elif player == 'ffplay':
-                        subprocess.run(['ffplay', '-nodisp', '-autoexit', audio_file], 
-                                     stderr=subprocess.DEVNULL, check=False)
-                    elif player == 'mpv':
-                        subprocess.run(['mpv', '--no-video', audio_file], check=False)
-                    return True
-            
-            return False
-            
+                title,
+                message
+            ], check=False, capture_output=True)
         except Exception:
-            return False
+            pass
+
+
+# ============================================================================
+# UI Renderer
+# ============================================================================
+
+class UIRenderer:
+    """Renders the TUI using Rich library"""
     
-    def get_next_prayer(self):
-        """الحصول على الصلاة القادمة"""
-        if not self.prayer_times:
-            return None, None
+    def __init__(self, prayer_manager: PrayerTimesManager):
+        self.prayer_manager = prayer_manager
+        self.console = Console()
+    
+    def create_header(self) -> Panel:
+        """Create header panel"""
+        pm = self.prayer_manager
+        
+        title = Text("🕌 ADHAN LIVE - PRAYER TIMES", style="bold cyan", justify="center")
+        
+        info_lines = []
+        
+        if pm.location_data:
+            city = pm.location_data.get('city', 'Unknown')
+            country = pm.location_data.get('country', 'Unknown')
+            lat = pm.location_data.get('lat', 0)
+            lon = pm.location_data.get('lon', 0)
+            
+            info_lines.append(f"📍 Location: {city}, {country}")
+            info_lines.append(f"🌐 Coordinates: {lat:.4f}, {lon:.4f}")
         
         now = datetime.now()
-        current_time = now.strftime('%H:%M')
+        info_lines.append(f"📅 Date: {now.strftime('%A, %B %d, %Y')}")
         
-        prayer_names_ar = {
-            'Fajr': 'الفجر',
-            'Dhuhr': 'الظهر',
-            'Asr': 'العصر',
-            'Maghrib': 'المغرب',
-            'Isha': 'العشاء'
-        }
+        if pm.hijri_date:
+            info_lines.append(f"🌙 Hijri: {pm.hijri_date}")
         
-        for prayer in self.config['enabled_prayers']:
-            if prayer in self.prayer_times:
-                prayer_time = self.prayer_times[prayer]
-                if prayer_time > current_time:
-                    return prayer, prayer_names_ar.get(prayer, prayer), prayer_time
+        info_lines.append(f"⏰ Time: {now.strftime('%H:%M:%S')}")
         
-        # الصلاة القادمة هي الفجر غداً
-        first_prayer = self.config['enabled_prayers'][0]
-        return (first_prayer, 
-                prayer_names_ar.get(first_prayer, first_prayer), 
-                self.prayer_times.get(first_prayer, ''))
+        content = "\n".join(info_lines)
+        
+        return Panel(content, title=title, border_style="cyan", box=box.DOUBLE)
     
-    def get_time_until_prayer(self, prayer_time):
-        """حساب الوقت المتبقي حتى الصلاة"""
-        try:
-            now = datetime.now()
-            prayer_dt = datetime.strptime(prayer_time, '%H:%M').replace(
-                year=now.year, month=now.month, day=now.day
-            )
-            
-            if prayer_dt < now:
-                prayer_dt += timedelta(days=1)
-            
-            diff = prayer_dt - now
-            hours = diff.seconds // 3600
-            minutes = (diff.seconds % 3600) // 60
-            seconds = diff.seconds % 60
-            
-            return hours, minutes, seconds
-        except Exception:
-            return 0, 0, 0
-    
-    def clear_screen(self):
-        """مسح الشاشة"""
-        os.system('clear' if os.name != 'nt' else 'cls')
-    
-    def print_header(self, location_data=None):
-        """Print beautiful header with colors"""
-        c = Colors
+    def create_prayer_table(self) -> Table:
+        """Create prayer times table"""
+        pm = self.prayer_manager
         
-        # Top border with gradient effect
-        print(f"{c.BRIGHT_CYAN}{c.BOLD}")
-        print("╔═══════════════════════════════════════════════════════════════╗")
-        print(f"║{c.BRIGHT_WHITE}              🕌 ADHAN REMINDER - LIVE CONSOLE{c.BRIGHT_CYAN}              ║")
-        print("╚═══════════════════════════════════════════════════════════════╝")
-        print(c.RESET)
-        print()
+        table = Table(
+            title="✨ PRAYER TIMES FOR TODAY ✨",
+            title_style="bold white",
+            border_style="cyan",
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold cyan"
+        )
         
-        if location_data:
-            city = location_data.get('city', 'Unknown')
-            country = location_data.get('country', 'Unknown')
-            lat = location_data.get('lat', 0)
-            lon = location_data.get('lon', 0)
-            
-            print(f"{c.BRIGHT_MAGENTA}📍 Location:{c.RESET} {c.WHITE}{city}, {country}{c.RESET}")
-            print(f"{c.BRIGHT_BLUE}🌐 Coords:{c.RESET}   {c.DIM}{lat:.4f}, {lon:.4f}{c.RESET}")
+        table.add_column("", style="bold", width=3)
+        table.add_column("", width=3)
+        table.add_column("Prayer", style="bold", width=12)
+        table.add_column("Time", style="bold", width=10)
+        table.add_column("Status", style="dim", width=15)
         
-        now = datetime.now()
-        print(f"{c.BRIGHT_YELLOW}📅 Date:{c.RESET}     {c.WHITE}{now.strftime('%A, %B %d, %Y')}{c.RESET}")
-        print(f"{c.BRIGHT_GREEN}⏰ Time:{c.RESET}     {c.BOLD}{c.WHITE}{now.strftime('%H:%M:%S')}{c.RESET}")
-        print()
-    
-    def print_prayer_times(self):
-        """Print beautiful prayer times with colors"""
-        c = Colors
-        
-        print(f"{c.BRIGHT_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{c.RESET}")
-        print(f"{c.BOLD}{c.BRIGHT_WHITE}                    ✨ PRAYER TIMES FOR TODAY ✨{c.RESET}")
-        print(f"{c.BRIGHT_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{c.RESET}")
-        print()
-        
-        prayer_data = {
-            'Fajr': {'icon': '🌅', 'color': c.BRIGHT_MAGENTA, 'name': 'Fajr'},
-            'Dhuhr': {'icon': '☀️', 'color': c.BRIGHT_YELLOW, 'name': 'Dhuhr'},
-            'Asr': {'icon': '🌤️', 'color': c.BRIGHT_CYAN, 'name': 'Asr'},
-            'Maghrib': {'icon': '🌆', 'color': c.BRIGHT_RED, 'name': 'Maghrib'},
-            'Isha': {'icon': '🌙', 'color': c.BRIGHT_BLUE, 'name': 'Isha'}
-        }
-        
-        now = datetime.now().strftime('%H:%M')
+        now = datetime.now(pm.timezone) if pm.timezone else datetime.now()
         
         for prayer in ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha']:
-            if prayer in self.prayer_times:
-                data = prayer_data[prayer]
-                icon = data['icon']
-                color = data['color']
-                name = data['name']
-                time = self.prayer_times[prayer]
+            if prayer not in pm.prayer_times:
+                continue
+            
+            prayer_time = pm.prayer_times[prayer]
+            color = pm.PRAYER_COLORS.get(prayer, 'white')
+            icon = pm.PRAYER_ICONS.get(prayer, '🕌')
+            
+            if prayer_time < now:
+                status = "✓"
+                status_style = "green"
+                time_style = "dim"
+                remaining = "Completed"
+            else:
+                status = "○"
+                status_style = "yellow"
+                time_style = "bright_white"
                 
-                # Check if prayer has passed
-                if time < now:
-                    status = f"{c.BRIGHT_GREEN}✓{c.RESET}"
-                    time_color = c.DIM
-                else:
-                    status = f"{c.BRIGHT_YELLOW}○{c.RESET}"
-                    time_color = c.BRIGHT_WHITE
-                
-                print(f"  {status} {icon}  {color}{c.BOLD}{name:10}{c.RESET} {c.BRIGHT_BLACK}│{c.RESET} {time_color}{time}{c.RESET}")
+                hours, minutes, _ = pm.get_time_remaining(prayer_time)
+                remaining = f"{hours}h {minutes}m"
+            
+            table.add_row(
+                f"[{status_style}]{status}[/]",
+                icon,
+                f"[{color}]{prayer}[/]",
+                f"[{time_style}]{prayer_time.strftime('%H:%M')}[/]",
+                f"[dim]{remaining}[/]"
+            )
         
-        print()
-        print(f"{c.BRIGHT_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{c.RESET}")
-        print()
+        return table
     
-    def print_next_prayer(self, prayer, prayer_ar, prayer_time):
-        """Print beautiful next prayer box with countdown"""
-        c = Colors
-        hours, minutes, seconds = self.get_time_until_prayer(prayer_time)
+    def create_next_prayer_panel(self) -> Optional[Panel]:
+        """Create next prayer panel with progress bar"""
+        pm = self.prayer_manager
         
-        # Prayer-specific colors
-        prayer_colors = {
-            'Fajr': c.BRIGHT_MAGENTA,
-            'Dhuhr': c.BRIGHT_YELLOW,
-            'Asr': c.BRIGHT_CYAN,
-            'Maghrib': c.BRIGHT_RED,
-            'Isha': c.BRIGHT_BLUE
-        }
+        next_prayer_data = pm.get_next_prayer()
+        if not next_prayer_data:
+            return None
         
-        prayer_icons = {
-            'Fajr': '🌅',
-            'Dhuhr': '☀️',
-            'Asr': '🌤️',
-            'Maghrib': '🌆',
-            'Isha': '🌙'
-        }
+        prayer, prayer_time = next_prayer_data
+        hours, minutes, seconds = pm.get_time_remaining(prayer_time)
         
-        color = prayer_colors.get(prayer, c.BRIGHT_WHITE)
-        icon = prayer_icons.get(prayer, '🕌')
+        color = pm.PRAYER_COLORS.get(prayer, 'white')
+        icon = pm.PRAYER_ICONS.get(prayer, '🕌')
         
-        print(f"{color}{c.BOLD}╔═══════════════════════════════════════════════════════════════╗{c.RESET}")
-        print(f"{color}║{c.RESET}                  {icon}  {c.BOLD}{c.BRIGHT_WHITE}NEXT PRAYER: {prayer.upper()}{c.RESET}  {icon}                 {color}║{c.RESET}")
-        print(f"{color}╠═══════════════════════════════════════════════════════════════╣{c.RESET}")
-        print(f"{color}║{c.RESET}                                                               {color}║{c.RESET}")
-        print(f"{color}║{c.RESET}  {c.BRIGHT_CYAN}⏰ Time:{c.RESET}      {c.BOLD}{c.BRIGHT_WHITE}{prayer_time}{c.RESET}                                         {color}║{c.RESET}")
-        print(f"{color}║{c.RESET}                                                               {color}║{c.RESET}")
-        print(f"{color}║{c.RESET}  {c.BRIGHT_YELLOW}⏳ Countdown:{c.RESET} {c.BOLD}{c.BRIGHT_GREEN}{hours:02d}{c.RESET}h {c.BOLD}{c.BRIGHT_GREEN}{minutes:02d}{c.RESET}m {c.BOLD}{c.BRIGHT_GREEN}{seconds:02d}{c.RESET}s                              {color}║{c.RESET}")
-        print(f"{color}║{c.RESET}                                                               {color}║{c.RESET}")
-        print(f"{color}╚═══════════════════════════════════════════════════════════════╝{c.RESET}")
-        print()
+        lines = []
+        lines.append(f"{icon}  [bold {color}]NEXT PRAYER: {prayer.upper()}[/]  {icon}")
+        lines.append("")
+        lines.append(f"⏰ Time: [bold white]{prayer_time.strftime('%H:%M')}[/]")
+        lines.append("")
+        lines.append(f"⏳ Countdown: [bold green]{hours:02d}[/]h [bold green]{minutes:02d}[/]m [bold green]{seconds:02d}[/]s")
+        
+        now = datetime.now(pm.timezone) if pm.timezone else datetime.now()
+        total_seconds = (prayer_time - now).total_seconds()
+        
+        prev_prayer_time = now.replace(hour=0, minute=0, second=0)
+        for p in ['Isha', 'Maghrib', 'Asr', 'Dhuhr', 'Fajr']:
+            if p in pm.prayer_times and pm.prayer_times[p] < now:
+                prev_prayer_time = pm.prayer_times[p]
+                break
+        
+        total_duration = (prayer_time - prev_prayer_time).total_seconds()
+        elapsed = (now - prev_prayer_time).total_seconds()
+        progress_percent = min(100, max(0, (elapsed / total_duration) * 100)) if total_duration > 0 else 0
+        
+        bar_width = 40
+        filled = int((progress_percent / 100) * bar_width)
+        bar = "█" * filled + "░" * (bar_width - filled)
+        lines.append("")
+        lines.append(f"[{color}]{bar}[/] {progress_percent:.1f}%")
+        
+        content = "\n".join(lines)
+        
+        return Panel(
+            content,
+            border_style=color,
+            box=box.DOUBLE,
+            padding=(1, 2)
+        )
+    
+    def create_footer(self) -> Text:
+        """Create footer text"""
+        return Text("Press Ctrl+C to exit", style="dim", justify="center")
+    
+    def render_live_view(self) -> Layout:
+        """Create complete live view layout"""
+        layout = Layout()
+        
+        layout.split_column(
+            Layout(name="header", size=9),
+            Layout(name="table", size=12),
+            Layout(name="next", size=10),
+            Layout(name="footer", size=1)
+        )
+        
+        layout["header"].update(self.create_header())
+        layout["table"].update(self.create_prayer_table())
+        
+        next_panel = self.create_next_prayer_panel()
+        if next_panel:
+            layout["next"].update(next_panel)
+        
+        layout["footer"].update(self.create_footer())
+        
+        return layout
+    
+    def print_today(self):
+        """Print today's prayer times (static)"""
+        self.console.print(self.create_header())
+        self.console.print()
+        self.console.print(self.create_prayer_table())
+    
+    def print_next(self):
+        """Print next prayer only (static)"""
+        next_panel = self.create_next_prayer_panel()
+        if next_panel:
+            self.console.print(next_panel)
+        else:
+            self.console.print("[yellow]No upcoming prayer found[/]")
+
+
+# ============================================================================
+# Main Application
+# ============================================================================
+
+class AdhanLiveApp:
+    """Main application controller"""
+    
+    def __init__(self, args):
+        self.args = args
+        self.config = ConfigManager()
+        
+        if args.mute:
+            self.config.set('mute', True)
+        
+        self.prayer_manager = PrayerTimesManager(self.config)
+        self.audio_player = AudioPlayer(self.config)
+        self.ui = UIRenderer(self.prayer_manager)
+        self.console = Console()
+        
+        self.last_played_prayer = None
+        self.last_update_date = None
+    
+    def initialize(self) -> bool:
+        """Initialize application and fetch prayer times"""
+        self.console.print("[cyan]Fetching prayer times...[/]")
+        
+        if not self.prayer_manager.update():
+            self.console.print("[red]Failed to fetch prayer times from API[/]")
+            return False
+        
+        self.console.print("[green]Prayer times fetched successfully![/]")
+        time.sleep(1)
+        
+        return True
+    
+    def check_prayer_time(self):
+        """Check if it's prayer time and play adhan"""
+        for prayer in ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha']:
+            if self.prayer_manager.is_prayer_time(prayer) and prayer != self.last_played_prayer:
+                audio_file = self.config.get('audio_file')
+                self.audio_player.play(audio_file)
+                
+                title = "🕌 Adhan Live"
+                message = f"It's time for {prayer} prayer!"
+                self.audio_player.send_notification(title, message)
+                
+                self.last_played_prayer = prayer
+                break
+    
+    def update_if_needed(self):
+        """Update prayer times if date changed"""
+        current_date = datetime.now().date()
+        if self.last_update_date != current_date:
+            self.prayer_manager.update()
+            self.last_update_date = current_date
+            self.last_played_prayer = None
     
     def run_live(self):
-        """Run live mode with beautiful interface"""
-        c = Colors
-        
-        print(f"{c.BRIGHT_CYAN}{c.BOLD}Starting Adhan Reminder...{c.RESET}")
-        
-        # Get location
-        location_data = self.get_location()
-        
-        # Fetch prayer times
-        if not self.fetch_prayer_times():
-            print(f"{c.BRIGHT_RED}❌ Failed to fetch prayer times{c.RESET}")
+        """Run live view with auto-refresh"""
+        if not self.initialize():
             return
         
-        last_fetch_date = datetime.now().date()
-        last_played_prayer = None
-        
-        print(f"{c.BRIGHT_GREEN}✅ Prayer times fetched successfully!{c.RESET}")
-        time.sleep(2)
+        self.last_update_date = datetime.now().date()
         
         try:
-            while True:
-                self.clear_screen()
-                
-                # التحقق من تغيير اليوم
-                current_date = datetime.now().date()
-                if last_fetch_date != current_date:
-                    self.fetch_prayer_times()
-                    last_fetch_date = current_date
-                    last_played_prayer = None
-                
-                # طباعة المعلومات
-                self.print_header(location_data)
-                self.print_prayer_times()
-                
-                # الصلاة القادمة
-                prayer, prayer_ar, prayer_time = self.get_next_prayer()
-                if prayer and prayer_time:
-                    self.print_next_prayer(prayer, prayer_ar, prayer_time)
-                
-                # Check prayer time
-                current_time = datetime.now().strftime('%H:%M')
-                if current_time in self.prayer_times.values():
-                    for p, t in self.prayer_times.items():
-                        if t == current_time and p != last_played_prayer:
-                            c = Colors
-                            print()
-                            print(f"{c.BRIGHT_GREEN}{c.BOLD}" + "═"*63 + c.RESET)
-                            print(f"{c.BRIGHT_WHITE}{c.BOLD}           🕌 IT'S TIME FOR {p.upper()} PRAYER! 🕌{c.RESET}")
-                            print(f"{c.BRIGHT_GREEN}{c.BOLD}" + "═"*63 + c.RESET)
-                            print()
-                            
-                            self.play_adhan(p)
-                            last_played_prayer = p
-                            time.sleep(60)  # Wait 1 minute to avoid repetition
-                
-                print(f"{Colors.DIM}Press Ctrl+C to exit{Colors.RESET}")
-                time.sleep(1)
-                
+            with Live(self.ui.render_live_view(), refresh_per_second=1, console=self.console) as live:
+                while True:
+                    self.update_if_needed()
+                    self.check_prayer_time()
+                    live.update(self.ui.render_live_view())
+                    time.sleep(1)
         except KeyboardInterrupt:
-            c = Colors
-            print("\n\n")
-            print(f"{c.BRIGHT_MAGENTA}{c.BOLD}╔═══════════════════════════════════════════════════════════════╗{c.RESET}")
-            print(f"{c.BRIGHT_MAGENTA}║{c.RESET}                  {c.BRIGHT_YELLOW}✨ PROGRAM STOPPED ✨{c.RESET}                     {c.BRIGHT_MAGENTA}║{c.RESET}")
-            print(f"{c.BRIGHT_MAGENTA}║{c.RESET}                                                               {c.BRIGHT_MAGENTA}║{c.RESET}")
-            print(f"{c.BRIGHT_MAGENTA}║{c.RESET}              {c.BRIGHT_GREEN}May Allah reward you! 🕌{c.RESET}                  {c.BRIGHT_MAGENTA}║{c.RESET}")
-            print(f"{c.BRIGHT_MAGENTA}╚═══════════════════════════════════════════════════════════════╝{c.RESET}")
-            print()
+            self.console.print()
+            self.console.print(Panel(
+                "[green]May Allah accept your prayers! 🕌[/]",
+                title="[yellow]✨ Program Stopped ✨[/]",
+                border_style="magenta",
+                box=box.DOUBLE
+            ))
+            self.console.print()
+    
+    def run_today(self):
+        """Show today's prayer times only"""
+        if not self.initialize():
+            return
+        self.ui.print_today()
+    
+    def run_next(self):
+        """Show next prayer only"""
+        if not self.initialize():
+            return
+        self.ui.print_next()
+
+
+# ============================================================================
+# CLI Entry Point
+# ============================================================================
 
 def main():
-    """الدالة الرئيسية"""
-    live = AdhanLive()
-    live.run_live()
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description="Adhan Live - Professional Prayer Times Display",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument('--today', action='store_true', help='Show today\'s prayer times only')
+    parser.add_argument('--next', action='store_true', help='Show next prayer only')
+    parser.add_argument('--mute', action='store_true', help='Mute adhan sound')
+    parser.add_argument('--version', action='version', version='Adhan Live 2.0.0')
+    
+    args = parser.parse_args()
+    
+    app = AdhanLiveApp(args)
+    
+    if args.today:
+        app.run_today()
+    elif args.next:
+        app.run_next()
+    else:
+        app.run_live()
+
 
 if __name__ == '__main__':
     main()
