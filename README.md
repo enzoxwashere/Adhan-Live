@@ -60,7 +60,7 @@
 ### على نظام Arch Linux (من AUR)
 
 ```bash
-git clone https://github.com/yourusername/adhan-live
+pacman -S adhan-live
 cd adhan-live
 makepkg -si
 ```
@@ -70,7 +70,7 @@ makepkg -si
 ```bash
 sudo pacman -S python python-requests python-rich libnotify mpv
 pip install -r requirements.txt
-chmod +x adhan_live_pro.py
+chmod +x adhan_live.py
 ./adhan_live_pro.py
 ```
 
@@ -129,7 +129,7 @@ adhan-live
 
 - صفحة المشاكل على GitHub:  
   [https://github.com/enzoxwashere/adhan-live/issues](https://github.com/enzoxwashere/adhan-live/issues)  
-- البريد الإلكتروني: `enzo@example.com`
+- البريد الإلكتروني: `enzo@enzox.online`
 
 ---
 
