@@ -60,7 +60,7 @@
 ### على نظام Arch Linux (من AUR)
 
 ```bash
-pacman -S adhan-live
+git clone https://github.com/enzoxwashere/Adhan-Live
 cd adhan-live
 makepkg -si
 ```
