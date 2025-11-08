@@ -1,4 +1,3 @@
-<<<<<<< Updated upstream
 pkgname=adhan-live
 pkgver=1.0.0
 pkgrel=1
@@ -14,7 +13,6 @@ sha256sums=('SKIP' 'SKIP')
 package() {
     install -Dm755 adhan-live.py "$pkgdir/usr/bin/adhan-live"
     install -Dm644 a1.mp3 "$pkgdir/usr/share/adhan-reminder/a1.mp3"
-=======
 # Maintainer: Enzo <contact@enzox.online>
 pkgname=adhan-live
 pkgver=2.0.0
@@ -56,5 +54,4 @@ package() {
     # Install documentation
     install -Dm644 "${srcdir}/README.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
     install -Dm644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
->>>>>>> Stashed changes
 }
