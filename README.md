@@ -9,7 +9,7 @@
 ![الإصدار](https://img.shields.io/badge/version-1.0.0-blue)
 ![بايثون](https://img.shields.io/badge/python-3.9+-green)
 ![الترخيص](https://img.shields.io/badge/license-MIT-orange
-(https://cdn.discordapp.com/attachments/1436636537201623091/1436636537843486780/image.png?ex=6910538a&is=690f020a&hm=fd6cb24e8ef9a49eccc01689225f1429c1c3291873f03cc71020f944a406e4f8&))
+
 
 ---
 
