@@ -71,7 +71,7 @@ makepkg -si
 sudo pacman -S python python-requests python-rich libnotify mpv
 pip install -r requirements.txt
 chmod +x adhan_live.py
-./adhan_live_pro.py
+./adhan_live.py
 ```
 
 **المتطلبات الأساسية:**  
