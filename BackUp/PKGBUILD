@@ -10,8 +10,6 @@ depends=(
     'python>=3.9'
     'python-requests'
     'python-rich'
-    'python-gobject'
-    'gtk3'
     'libnotify'
 )
 optdepends=(
@@ -25,23 +23,15 @@ provides=('adhan-live')
 install=${pkgname}.install
 source=(
     "adhan-live.py"
-    "adhan-live-gui.py"
-    "adhan-live.desktop"
     "a1.mp3"
     "README.md"
     "LICENSE"
 )
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 package() {
-    # Install TUI script
+    # Install main script
     install -Dm755 "${srcdir}/adhan-live.py" "${pkgdir}/usr/bin/adhan-live"
-    
-    # Install GUI script
-    install -Dm755 "${srcdir}/adhan-live-gui.py" "${pkgdir}/usr/bin/adhan-live-gui"
-    
-    # Install desktop file
-    install -Dm644 "${srcdir}/adhan-live.desktop" "${pkgdir}/usr/share/applications/adhan-live.desktop"
     
     # Install audio file
     install -Dm644 "${srcdir}/a1.mp3" "${pkgdir}/usr/share/adhan-live/a1.mp3"

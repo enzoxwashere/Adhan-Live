@@ -34,13 +34,9 @@ try:
     from rich.layout import Layout
     from rich.text import Text
     from rich import box
-    from rich.progress import Progress, BarColumn, TextColumn
 except ImportError:
     print("Error: 'rich' module not found. Install it with: pip install rich")
     sys.exit(1)
-
-# Initialize console for error messages
-console = Console()
 
 
 # ============================================================================
@@ -51,21 +47,16 @@ class ConfigManager:
     """Manages application configuration"""
     
     DEFAULT_CONFIG = {
-        "audio_file": "/usr/share/adhan-live/a1.mp3",
+        "audio_file": "a1.mp3",
         "calculation_method": 4,
         "auto_detect_location": True,
         "latitude": None,
         "longitude": None,
         "timezone": None,
-        "city": None,
-        "country": None,
         "enabled_prayers": ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"],
         "volume": 100,
         "language": "en",
-        "mute": False,
-        "theme": "auto",
-        "retry_attempts": 3,
-        "retry_delay": 2
+        "mute": False
     }
     
     def __init__(self):
@@ -116,48 +107,25 @@ class PrayerTimesAPI:
         self.session.headers.update({'User-Agent': 'AdhanLive/2.0'})
     
     def get_location(self) -> Optional[Dict]:
-        """Get location from IP with retry logic"""
-        retry_attempts = self.config.get('retry_attempts', 3)
-        retry_delay = self.config.get('retry_delay', 2)
-        
-        for attempt in range(retry_attempts):
-            try:
-                response = self.session.get(self.LOCATION_API, timeout=5)
-                response.raise_for_status()
+        """Get location from IP"""
+        try:
+            response = self.session.get(self.LOCATION_API, timeout=10)
+            if response.status_code == 200:
                 data = response.json()
-                
-                if data.get('status') == 'fail':
-                    console.print(f"[yellow]Failed to detect location automatically (attempt {attempt + 1}/{retry_attempts})[/yellow]")
-                    if attempt < retry_attempts - 1:
-                        time.sleep(retry_delay)
-                    continue
-                
                 if data.get('status') == 'success':
-                    location = {
+                    return {
                         'city': data.get('city', 'Unknown'),
                         'country': data.get('country', 'Unknown'),
                         'lat': data.get('lat'),
                         'lon': data.get('lon'),
                         'timezone': data.get('timezone')
                     }
-                    # Save to config
-                    self.config.set('city', location['city'])
-                    self.config.set('country', location['country'])
-                    return location
-                    
-            except requests.RequestException as e:
-                console.print(f"[yellow]Network error (attempt {attempt + 1}/{retry_attempts}): {str(e)[:50]}[/yellow]")
-                if attempt < retry_attempts - 1:
-                    time.sleep(retry_delay)
-            except Exception as e:
-                console.print(f"[red]Unexpected error in location detection: {str(e)[:50]}[/red]")
-                break
-        
-        console.print("[red]Failed to detect location after all attempts[/red]")
+        except Exception:
+            pass
         return None
     
     def fetch_prayer_times(self, date: Optional[datetime] = None) -> Optional[Dict]:
-        """Fetch prayer times from API with retry logic"""
+        """Fetch prayer times from API"""
         if date is None:
             date = datetime.now()
         
@@ -172,39 +140,24 @@ class PrayerTimesAPI:
         lon = self.config.get('longitude')
         
         if not lat or not lon:
-            console.print("[red]No location coordinates available. Please configure manually.[/red]")
             return None
         
-        retry_attempts = self.config.get('retry_attempts', 3)
-        retry_delay = self.config.get('retry_delay', 2)
-        
-        for attempt in range(retry_attempts):
-            try:
-                url = f"{self.BASE_URL}/timings/{date.strftime('%d-%m-%Y')}"
-                params = {
-                    'latitude': lat,
-                    'longitude': lon,
-                    'method': self.config.get('calculation_method', 4)
-                }
-                
-                response = self.session.get(url, params=params, timeout=10)
-                response.raise_for_status()
+        try:
+            url = f"{self.BASE_URL}/timings/{date.strftime('%d-%m-%Y')}"
+            params = {
+                'latitude': lat,
+                'longitude': lon,
+                'method': self.config.get('calculation_method', 4)
+            }
+            
+            response = self.session.get(url, params=params, timeout=10)
+            if response.status_code == 200:
                 data = response.json()
-                
                 if data.get('code') == 200:
                     return data['data']
-                else:
-                    console.print(f"[yellow]API returned error code: {data.get('code')} (attempt {attempt + 1}/{retry_attempts})[/yellow]")
-                    
-            except requests.RequestException as e:
-                console.print(f"[yellow]Failed to fetch prayer times (attempt {attempt + 1}/{retry_attempts}): {str(e)[:50]}[/yellow]")
-                if attempt < retry_attempts - 1:
-                    time.sleep(retry_delay)
-            except Exception as e:
-                console.print(f"[red]Unexpected error fetching prayer times: {str(e)[:50]}[/red]")
-                break
+        except Exception:
+            pass
         
-        console.print("[red]Failed to fetch prayer times after all attempts[/red]")
         return None
 
 
@@ -224,11 +177,11 @@ class PrayerTimesManager:
     }
     
     PRAYER_ICONS = {
-        'Fajr': '◗',
-        'Dhuhr': '◉',
-        'Asr': '◐',
-        'Maghrib': '◖',
-        'Isha': '◕'
+        'Fajr': '🌅',
+        'Dhuhr': '☀️',
+        'Asr': '🌤️',
+        'Maghrib': '🌆',
+        'Isha': '🌙'
     }
     
     def __init__(self, config: ConfigManager):
@@ -390,7 +343,7 @@ class UIRenderer:
         """Create header panel"""
         pm = self.prayer_manager
         
-        title = Text("◈ ADHAN LIVE - PRAYER TIMES ◈", style="bold cyan", justify="center")
+        title = Text("🕌 ADHAN LIVE - PRAYER TIMES", style="bold cyan", justify="center")
         
         info_lines = []
         
@@ -400,16 +353,16 @@ class UIRenderer:
             lat = pm.location_data.get('lat', 0)
             lon = pm.location_data.get('lon', 0)
             
-            info_lines.append(f"◉ Location: {city}, {country}")
-            info_lines.append(f"◈ Coordinates: {lat:.4f}, {lon:.4f}")
+            info_lines.append(f"📍 Location: {city}, {country}")
+            info_lines.append(f"🌐 Coordinates: {lat:.4f}, {lon:.4f}")
         
         now = datetime.now()
-        info_lines.append(f"◆ Date: {now.strftime('%A, %B %d, %Y')}")
+        info_lines.append(f"📅 Date: {now.strftime('%A, %B %d, %Y')}")
         
         if pm.hijri_date:
-            info_lines.append(f"◐ Hijri: {pm.hijri_date}")
+            info_lines.append(f"🌙 Hijri: {pm.hijri_date}")
         
-        info_lines.append(f"◷ Time: {now.strftime('%H:%M:%S')}")
+        info_lines.append(f"⏰ Time: {now.strftime('%H:%M:%S')}")
         
         content = "\n".join(info_lines)
         
@@ -420,7 +373,7 @@ class UIRenderer:
         pm = self.prayer_manager
         
         table = Table(
-            title="◈◈◈ PRAYER TIMES FOR TODAY ◈◈◈",
+            title="✨ PRAYER TIMES FOR TODAY ✨",
             title_style="bold white",
             border_style="cyan",
             box=box.ROUNDED,
@@ -479,14 +432,14 @@ class UIRenderer:
         hours, minutes, seconds = pm.get_time_remaining(prayer_time)
         
         color = pm.PRAYER_COLORS.get(prayer, 'white')
-        icon = pm.PRAYER_ICONS.get(prayer, '◆')
+        icon = pm.PRAYER_ICONS.get(prayer, '🕌')
         
         lines = []
-        lines.append(f"◈ {icon}  [bold {color}]NEXT PRAYER: {prayer.upper()}[/]  {icon} ◈")
+        lines.append(f"{icon}  [bold {color}]NEXT PRAYER: {prayer.upper()}[/]  {icon}")
         lines.append("")
-        lines.append(f"◷ Time: [bold white]{prayer_time.strftime('%H:%M')}[/]")
+        lines.append(f"⏰ Time: [bold white]{prayer_time.strftime('%H:%M')}[/]")
         lines.append("")
-        lines.append(f"◵ Countdown: [bold green]{hours:02d}[/]h [bold green]{minutes:02d}[/]m [bold green]{seconds:02d}[/]s")
+        lines.append(f"⏳ Countdown: [bold green]{hours:02d}[/]h [bold green]{minutes:02d}[/]m [bold green]{seconds:02d}[/]s")
         
         now = datetime.now(pm.timezone) if pm.timezone else datetime.now()
         total_seconds = (prayer_time - now).total_seconds()
@@ -599,7 +552,7 @@ class AdhanLiveApp:
                 audio_file = self.config.get('audio_file')
                 self.audio_player.play(audio_file)
                 
-                title = "◈ Adhan Live"
+                title = "🕌 Adhan Live"
                 message = f"It's time for {prayer} prayer!"
                 self.audio_player.send_notification(title, message)
                 
@@ -631,8 +584,8 @@ class AdhanLiveApp:
         except KeyboardInterrupt:
             self.console.print()
             self.console.print(Panel(
-                "[green]May Allah accept your prayers![/]",
-                title="[yellow]◈ Program Stopped ◈[/]",
+                "[green]May Allah accept your prayers! 🕌[/]",
+                title="[yellow]✨ Program Stopped ✨[/]",
                 border_style="magenta",
                 box=box.DOUBLE
             ))

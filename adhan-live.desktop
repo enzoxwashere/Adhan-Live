@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Adhan Live
+GenericName=Prayer Times
+Comment=Professional Islamic prayer times display
+Icon=appointment-soon
+Exec=adhan-live-gui
+Terminal=false
+Categories=Utility;GTK;
+Keywords=prayer;islam;adhan;salah;
+StartupNotify=true
